@@ -1,0 +1,1481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SDLC Automation Platform</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#080c14;--bg2:#0d1420;--bg3:#111827;--bg4:#1a2235;
+  --border:#1e2d47;--border2:#253755;--border3:#2e4468;
+  --text:#e8edf5;--text2:#8fa3c0;--text3:#4d6280;
+  --blue:#3b82f6;--blue2:#60a5fa;--blue-dim:#1e3a5f;
+  --green:#22c55e;--green-dim:#14291f;
+  --amber:#f59e0b;--amber-dim:#271f0d;
+  --red:#ef4444;--red-dim:#271414;
+  --purple:#a855f7;--purple-dim:#1f1430;
+  --teal:#14b8a6;--teal-dim:#0d2520;
+  --orange:#f97316;--orange-dim:#2a1505;
+  --cyan:#06b6d4;--cyan-dim:#061e28;
+  --lime:#84cc16;--lime-dim:#162009;
+  --mono:'JetBrains Mono',monospace;
+  --sans:'Sora',sans-serif;
+  --r:8px;--r2:12px;--r3:16px;
+}
+html{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border3);border-radius:2px}
+button{cursor:pointer;font-family:var(--sans);border:none;outline:none;transition:all .15s}
+input,textarea{font-family:var(--sans);outline:none}
+a{color:var(--blue2);text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* Animations */
+@keyframes pulse-ring{0%{transform:scale(.95);opacity:1}70%{transform:scale(1.05);opacity:.7}100%{transform:scale(.95);opacity:1}}
+@keyframes slide-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes flow{0%{stroke-dashoffset:100}100%{stroke-dashoffset:0}}
+@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+@keyframes fade-in{from{opacity:0}to{opacity:1}}
+
+.animate-in{animation:slide-in .25s ease both}
+.spin{animation:spin 1s linear infinite}
+
+/* Skeleton loader */
+.skeleton{
+  background:linear-gradient(90deg,var(--bg3) 25%,var(--bg4) 50%,var(--bg3) 75%);
+  background-size:200% 100%;
+  animation:shimmer 1.5s infinite;
+  border-radius:var(--r);
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const {useState,useEffect,useRef,useCallback,useMemo} = React;
+const API = 'http://localhost:8000';
+
+/* ─── Phase meta ──────────────────────────────────────────────────────────── */
+const PHASES = [
+  {key:'init',          label:'Initialise',    icon:'⚡', color:'#4d6280',  desc:'Boot pipeline, detect services'},
+  {key:'requirements',  label:'Requirements',  icon:'📋', color:'#3b82f6',  desc:'Extract, classify, acceptance criteria'},
+  {key:'design',        label:'Design',        icon:'🏗',  color:'#a855f7',  desc:'Architecture, API contracts, ADRs'},
+  {key:'planning',      label:'Planning',      icon:'📅', color:'#f59e0b',  desc:'Epics, stories, sprint cycles'},
+  {key:'development',   label:'Development',   icon:'💻', color:'#22c55e',  desc:'Scaffold, implement, pull request'},
+  {key:'testing',       label:'Testing',       icon:'🧪', color:'#14b8a6',  desc:'Unit, integration, e2e, security'},
+  {key:'ci_cd',         label:'CI / CD',       icon:'⚙',  color:'#8b5cf6',  desc:'Pipeline, lint, build, push image'},
+  {key:'deployment',    label:'Deployment',    icon:'🚀', color:'#f97316',  desc:'Staging → canary → production'},
+  {key:'monitoring',    label:'Monitoring',    icon:'📊', color:'#06b6d4',  desc:'SLOs, alerts, dashboards, runbooks'},
+  {key:'documentation', label:'Documentation', icon:'📚', color:'#84cc16',  desc:'README, wiki, traceability matrix'},
+  {key:'done',          label:'Complete',      icon:'✅', color:'#22c55e',  desc:'All phases finished'},
+  {key:'failed',        label:'Failed',        icon:'❌', color:'#ef4444',  desc:'Pipeline encountered an error'},
+];
+const phaseOf = key => PHASES.find(p=>p.key===key)||PHASES[0];
+const PHASE_IDX = Object.fromEntries(PHASES.map((p,i)=>[p.key,i]));
+
+/* ─── Tiny utilities ─────────────────────────────────────────────────────── */
+const fmt = iso => iso ? new Date(iso).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '—';
+const fmtDate = iso => iso ? new Date(iso).toLocaleDateString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+const pct = n => `${(+n||0).toFixed(1)}%`;
+const truncate = (s,n=60) => s?.length>n ? s.slice(0,n)+'…' : s;
+const cls = (...a) => a.filter(Boolean).join(' ');
+
+/* ─── Base components ────────────────────────────────────────────────────── */
+function Card({children, style, glow}){
+  return <div style={{
+    background:'var(--bg2)',
+    border:`1px solid ${glow||'var(--border)'}`,
+    borderRadius:'var(--r2)',
+    boxShadow: glow ? `0 0 24px ${glow}22` : 'none',
+    ...style
+  }}>{children}</div>;
+}
+
+function Tag({label, color='var(--text3)', size=11}){
+  return <span style={{
+    fontSize:size, fontWeight:600, padding:'2px 8px',
+    borderRadius:20, border:`1px solid ${color}55`,
+    background:`${color}18`, color,
+    display:'inline-block', letterSpacing:'.02em', whiteSpace:'nowrap'
+  }}>{label}</span>;
+}
+
+function Spinner({size=14, color='var(--blue)'}){
+  return <div style={{
+    width:size,height:size,borderRadius:'50%',
+    border:`2px solid ${color}33`,
+    borderTopColor:color,
+    animation:'spin .7s linear infinite',flexShrink:0
+  }}/>;
+}
+
+function CopyButton({text}){
+  const [copied,setCopied]=useState(false);
+  return <button onClick={()=>{navigator.clipboard.writeText(text);setCopied(true);setTimeout(()=>setCopied(false),1500)}}
+    style={{fontSize:10,padding:'2px 7px',background:copied?'var(--green-dim)':'var(--bg4)',
+      color:copied?'var(--green)':'var(--text3)',border:`1px solid ${copied?'var(--green)':'var(--border2)'}`,
+      borderRadius:4,fontFamily:'var(--mono)'}}>
+    {copied?'copied':'copy'}
+  </button>;
+}
+
+function CodeBlock({content,lang='json',maxH=300}){
+  const text = typeof content==='object' ? JSON.stringify(content,null,2) : content||'';
+  return <div style={{position:'relative',background:'var(--bg)',border:'1px solid var(--border)',
+    borderRadius:'var(--r)',overflow:'hidden'}}>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+      padding:'6px 10px',borderBottom:'1px solid var(--border)',background:'var(--bg3)'}}>
+      <span style={{fontSize:10,color:'var(--text3)',fontFamily:'var(--mono)'}}>{lang}</span>
+      <CopyButton text={text}/>
+    </div>
+    <pre style={{overflowY:'auto',maxHeight:maxH,padding:'12px',fontSize:11,
+      fontFamily:'var(--mono)',lineHeight:1.7,color:'var(--text2)',whiteSpace:'pre-wrap',wordBreak:'break-all'}}>
+      {text}
+    </pre>
+  </div>;
+}
+
+function ExternalLink({href,children}){
+  if(!href) return <span style={{color:'var(--text3)'}}>—</span>;
+  return <a href={href} target="_blank" rel="noreferrer"
+    style={{color:'var(--blue2)',display:'inline-flex',alignItems:'center',gap:4}}>
+    {children} <span style={{fontSize:10}}>↗</span>
+  </a>;
+}
+
+/* ─── Upload page ────────────────────────────────────────────────────────── */
+function UploadPage({onStart}){
+  const [mode,setMode]=useState('file');
+  const [file,setFile]=useState(null);
+  const [text,setText]=useState('');
+  const [name,setName]=useState('');
+  const [drag,setDrag]=useState(false);
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState('');
+  const ref=useRef();
+
+  const pickFile = f => {
+    setFile(f);
+    if(!name) setName(f.name.replace(/\.[^.]+$/,'').replace(/[-_]/g,' '));
+    setError('');
+  };
+
+  const submit = async () => {
+    if(!name.trim()){setError('Enter a project name');return;}
+    if(mode==='file'&&!file){setError('Select a requirements file');return;}
+    if(mode==='text'&&!text.trim()){setError('Enter requirements text');return;}
+    setLoading(true); setError('');
+    const fd=new FormData();
+    fd.append('project_name',name.trim());
+    if(mode==='file') fd.append('file',file);
+    else fd.append('requirements_text',text);
+    try{
+      const r=await fetch(`${API}/api/runs`,{method:'POST',body:fd});
+      if(!r.ok) throw new Error(`Server error ${r.status}`);
+      const d=await r.json();
+      onStart(d.run_id,name.trim());
+    }catch(e){setError(e.message);}
+    finally{setLoading(false);}
+  };
+
+  return (
+    <div style={{minHeight:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'2rem 1rem'}}>
+      {/* Logo / title */}
+      <div style={{textAlign:'center',marginBottom:'2.5rem',animation:'fade-in .5s ease both'}}>
+        <div style={{fontSize:48,marginBottom:12,filter:'drop-shadow(0 0 24px #3b82f660)'}}>⚡</div>
+        <h1 style={{fontSize:32,fontWeight:700,letterSpacing:'-.02em',
+          background:'linear-gradient(135deg,#60a5fa,#a78bfa,#34d399)',
+          WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent',marginBottom:8}}>
+          SDLC Automation
+        </h1>
+        <p style={{color:'var(--text3)',fontSize:13,letterSpacing:'.01em'}}>
+          Groq LLM · LangGraph · Gitea · Plane · Outline · MinIO
+        </p>
+      </div>
+
+      {/* Card */}
+      <div style={{width:'100%',maxWidth:560,animation:'slide-in .3s ease both'}}>
+        <Card style={{padding:'1.75rem'}}>
+          {/* Mode tabs */}
+          <div style={{display:'flex',gap:6,marginBottom:'1.5rem',background:'var(--bg3)',
+            padding:4,borderRadius:'var(--r)',border:'1px solid var(--border)'}}>
+            {[['file','📄  Upload File'],['text','✏️  Paste Text']].map(([m,l])=>(
+              <button key={m} onClick={()=>setMode(m)} style={{
+                flex:1,padding:'8px 12px',borderRadius:6,fontSize:13,fontWeight:mode===m?600:400,
+                background:mode===m?'var(--bg2)':'transparent',
+                color:mode===m?'var(--text)':'var(--text3)',
+                border:mode===m?'1px solid var(--border2)':'1px solid transparent',
+              }}>{l}</button>
+            ))}
+          </div>
+
+          {/* Project name */}
+          <label style={{display:'block',fontSize:11,fontWeight:600,color:'var(--text3)',
+            textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6}}>Project Name</label>
+          <input value={name} onChange={e=>setName(e.target.value)}
+            onKeyDown={e=>e.key==='Enter'&&submit()}
+            placeholder="e.g. TaskFlow Pro"
+            style={{width:'100%',padding:'10px 14px',marginBottom:'1.25rem',
+              background:'var(--bg3)',border:'1px solid var(--border2)',borderRadius:'var(--r)',
+              color:'var(--text)',fontSize:14,transition:'border-color .15s'}}
+            onFocus={e=>e.target.style.borderColor='var(--blue)'}
+            onBlur={e=>e.target.style.borderColor='var(--border2)'}/>
+
+          {/* Input area */}
+          {mode==='file' ? (
+            <div onDragOver={e=>{e.preventDefault();setDrag(true)}}
+              onDragLeave={()=>setDrag(false)}
+              onDrop={e=>{e.preventDefault();setDrag(false);e.dataTransfer.files[0]&&pickFile(e.dataTransfer.files[0])}}
+              onClick={()=>ref.current.click()}
+              style={{border:`2px dashed ${drag?'var(--blue)':'var(--border2)'}`,
+                borderRadius:'var(--r2)',padding:'2.5rem 1rem',textAlign:'center',cursor:'pointer',
+                background:drag?'var(--blue-dim)':'var(--bg3)',transition:'all .15s',marginBottom:'1.25rem'}}>
+              <input ref={ref} type="file" accept=".txt,.md,.pdf,.docx" style={{display:'none'}}
+                onChange={e=>e.target.files[0]&&pickFile(e.target.files[0])}/>
+              {file ? (
+                <div>
+                  <div style={{fontSize:36,marginBottom:8}}>📄</div>
+                  <div style={{fontWeight:600,color:'var(--blue2)',fontSize:15}}>{file.name}</div>
+                  <div style={{fontSize:12,color:'var(--text3)',marginTop:4}}>{(file.size/1024).toFixed(1)} KB · click to change</div>
+                </div>
+              ) : (
+                <div>
+                  <div style={{fontSize:40,marginBottom:10,opacity:.4}}>📁</div>
+                  <div style={{fontWeight:500,color:'var(--text2)',fontSize:14}}>Drop your requirements document here</div>
+                  <div style={{fontSize:12,color:'var(--text3)',marginTop:6}}>.txt · .md · .pdf · .docx</div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <textarea value={text} onChange={e=>setText(e.target.value)}
+              placeholder={"Paste your requirements here…\n\nExample:\nFR-001: Users shall register with email and password.\nFR-002: The system shall support real-time notifications.\nNFR-001: API p95 latency < 200ms."}
+              style={{width:'100%',height:220,padding:'12px 14px',marginBottom:'1.25rem',
+                background:'var(--bg3)',border:'1px solid var(--border2)',borderRadius:'var(--r)',
+                color:'var(--text)',fontSize:13,resize:'vertical',lineHeight:1.7,transition:'border-color .15s'}}
+              onFocus={e=>e.target.style.borderColor='var(--blue)'}
+              onBlur={e=>e.target.style.borderColor='var(--border2)'}/>
+          )}
+
+          {/* Error */}
+          {error&&<div style={{padding:'8px 12px',background:'var(--red-dim)',border:'1px solid var(--red)',
+            borderRadius:'var(--r)',color:'var(--red)',fontSize:13,marginBottom:'1rem'}}>{error}</div>}
+
+          {/* Submit */}
+          <button onClick={submit} disabled={loading} style={{
+            width:'100%',padding:'13px',borderRadius:'var(--r)',fontWeight:600,fontSize:15,
+            background:loading?'var(--bg4)':'linear-gradient(135deg,#2563eb,#7c3aed)',
+            color:loading?'var(--text3)':'#fff',
+            border:`1px solid ${loading?'var(--border)':'transparent'}`,
+            opacity:loading?.75:1,letterSpacing:'.01em',
+          }}>
+            {loading ? <span style={{display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
+              <Spinner size={16} color="var(--text3)"/> Starting pipeline…
+            </span> : '⚡  Run SDLC Pipeline'}
+          </button>
+        </Card>
+
+        {/* Service pills */}
+        <div style={{display:'flex',gap:6,flexWrap:'wrap',justifyContent:'center',marginTop:'1.25rem'}}>
+          {['Groq llama3-70b','LangGraph','Gitea','Plane','Outline','MinIO','Mattermost','Zammad'].map(s=>(
+            <Tag key={s} label={s} color="var(--text3)" size={10}/>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Phase stepper (left sidebar) ──────────────────────────────────────── */
+function PhaseStepper({currentPhase, phaseStatuses, onSelect, selectedPhase, runId, pipelineStatus, onRerunPhase}){
+  const currentIdx  = PHASE_IDX[currentPhase]??0;
+  const [rerunning, setRerunning] = useState(null);
+  const canRerun = pipelineStatus !== 'running';
+
+  const handleRerun = async (e, phaseKey) => {
+    e.stopPropagation();
+    if (!canRerun || rerunning) return;
+    if (!runId) { alert('No active run — start a pipeline first'); return; }
+    const yes = window.confirm(`Re-run the "${phaseKey}" phase?\nPrevious results will be overwritten.`);
+    if (!yes) return;
+    setRerunning(phaseKey);
+    onSelect(phaseKey);
+    if (onRerunPhase) onRerunPhase(phaseKey);
+    try {
+      const r = await fetch(`${API}/api/runs/${runId}/phase/${phaseKey}`, {method:'POST'});
+      if (!r.ok) {
+        const err = await r.json().catch(()=>({}));
+        alert(`Re-run failed: ${err.detail || r.statusText}`);
+        setRerunning(null);
+      }
+    } catch(err) {
+      alert(`Re-run error: ${err.message}`);
+      setRerunning(null);
+    }
+  };
+
+  // Clear rerunning state when a phase_rerun_complete comes through
+  // (handled by parent via pipelineStatus changing away from "running")
+  useEffect(()=>{
+    if (rerunning && pipelineStatus === 'done') setRerunning(null);
+  }, [pipelineStatus]);
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:1}}>
+
+      {/* Header */}
+      <div style={{padding:'8px 12px 6px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+        <span style={{fontSize:10,fontWeight:600,color:'var(--text3)',textTransform:'uppercase',letterSpacing:'0.06em'}}>Phases</span>
+        {canRerun && currentIdx > 0 &&
+          <span style={{fontSize:10,color:'var(--text3)'}}>click ↺ to re-run</span>}
+      </div>
+
+      {PHASES.slice(0,10).map((ph,i)=>{
+        const status     = phaseStatuses[ph.key];
+        const isDone     = i < currentIdx || status?.status === 'completed';
+        const isActive   = ph.key === currentPhase && !isDone;
+        const isSel      = ph.key === selectedPhase;
+        const hasFailed  = status?.status === 'failed';
+        const isRerunning= rerunning === ph.key;
+        const isPending  = !isDone && !isActive && !hasFailed;
+        const showRerun  = (isDone || hasFailed) && canRerun && !isRerunning;
+
+        // Dot colours
+        let dotColor = 'var(--border2)', dotBg = 'transparent';
+        if(isRerunning){ dotColor='#F5C518'; dotBg='rgba(245,197,24,0.12)'; }
+        else if(hasFailed){ dotColor='var(--red)'; dotBg='rgba(239,68,68,0.08)'; }
+        else if(isDone)  { dotColor='#22c55e';    dotBg='rgba(34,197,94,0.08)'; }
+        else if(isActive){ dotColor=ph.color;     dotBg=`${ph.color}18`; }
+
+        const labelColor = isRerunning ? '#F5C518'
+          : isActive  ? ph.color
+          : isDone    ? 'var(--text)'
+          : 'var(--text3)';
+
+        return (
+          <div key={ph.key} style={{
+            display:'flex', alignItems:'center', gap:0,
+            borderRadius:'var(--r)',
+            border:`1px solid ${isSel ? ph.color : 'transparent'}`,
+            background: isSel ? `${ph.color}10` : 'transparent',
+            margin:'0 4px', overflow:'hidden',
+            transition:'background .15s, border-color .15s',
+          }}>
+
+            {/* Main row — click to select */}
+            <button onClick={()=>onSelect(ph.key)} style={{
+              flex:1, display:'flex', alignItems:'center', gap:9,
+              padding:'9px 8px 9px 10px',
+              background:'transparent', border:'none', textAlign:'left',
+              cursor:'pointer', minWidth:0,
+            }}>
+              {/* Status dot */}
+              <div style={{
+                width:26, height:26, borderRadius:'50%', flexShrink:0,
+                background:dotBg, border:`2px solid ${dotColor}`,
+                display:'flex', alignItems:'center', justifyContent:'center',
+                fontSize:11, fontWeight:600, transition:'all .2s',
+                boxShadow: isActive ? `0 0 0 3px ${ph.color}25` : 'none',
+              }}>
+                {isRerunning ? <Spinner size={11} color='#F5C518'/>
+                  : hasFailed ? <span style={{color:'var(--red)',fontSize:12}}>✕</span>
+                  : isDone    ? <span style={{color:'#22c55e',fontSize:12}}>✓</span>
+                  : isActive  ? <Spinner size={11} color={ph.color}/>
+                  : <span style={{color:'var(--text3)',fontSize:11}}>{ph.icon}</span>}
+              </div>
+
+              {/* Label + desc */}
+              <div style={{flex:1, minWidth:0}}>
+                <div style={{
+                  fontSize:12, fontWeight: isSel||isActive ? 600 : 400,
+                  color: labelColor,
+                  whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis',
+                }}>
+                  {isRerunning ? `↺ ${ph.label}…` : ph.label}
+                </div>
+                {isActive && !isRerunning &&
+                  <div style={{fontSize:10,color:'var(--text3)',marginTop:1,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                    {ph.desc}
+                  </div>}
+              </div>
+
+              {/* Duration */}
+              {status?.duration && !isRerunning &&
+                <div style={{fontSize:10,color:'var(--text3)',fontFamily:'var(--mono)',flexShrink:0}}>
+                  {status.duration}s
+                </div>}
+            </button>
+
+            {/* Re-run button — always visible for done/failed phases */}
+            {showRerun && (
+              <button onClick={e=>handleRerun(e, ph.key)}
+                title={`Re-run ${ph.label}`}
+                style={{
+                  flexShrink:0, padding:'0 10px', alignSelf:'stretch',
+                  background:'transparent',
+                  borderLeft:`1px solid ${isSel ? ph.color+'44' : 'var(--border1)'}`,
+                  border:'none',
+                  borderLeft:`1px solid var(--border1)`,
+                  cursor:'pointer', fontSize:13, color:'var(--text3)',
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  transition:'background .15s, color .15s',
+                  minWidth:32,
+                }}
+                onMouseEnter={e=>{ e.currentTarget.style.background='var(--bg3)'; e.currentTarget.style.color=ph.color; }}
+                onMouseLeave={e=>{ e.currentTarget.style.background='transparent'; e.currentTarget.style.color='var(--text3)'; }}
+              >
+                ↺
+              </button>
+            )}
+
+            {/* Spinner placeholder to keep layout stable while rerunning */}
+            {isRerunning && (
+              <div style={{flexShrink:0, padding:'0 10px', alignSelf:'stretch',
+                display:'flex', alignItems:'center', justifyContent:'center', minWidth:32}}>
+                <Spinner size={11} color='#F5C518'/>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ─── Requirements artifact view ─────────────────────────────────────────── */
+function RequirementsView({reqs=[]}){
+  const [filter,setFilter]=useState('all');
+  const types = ['all','functional','non_functional','constraint','assumption'];
+  const filtered = filter==='all' ? reqs : reqs.filter(r=>r.type===filter);
+  const colors = {functional:'var(--blue)',non_functional:'var(--purple)',constraint:'var(--amber)',assumption:'var(--teal)'};
+  const priorities = {critical:'var(--red)',high:'var(--orange)',medium:'var(--amber)',low:'var(--green)'};
+
+  if(!reqs.length) return <div style={{color:'var(--text3)',fontSize:13,padding:'1rem'}}>No requirements extracted yet.</div>;
+
+  return <div>
+    {/* Filter tabs */}
+    <div style={{display:'flex',gap:6,marginBottom:'1rem',flexWrap:'wrap'}}>
+      {types.map(t=>(
+        <button key={t} onClick={()=>setFilter(t)} style={{
+          padding:'4px 12px',borderRadius:20,fontSize:11,fontWeight:500,
+          background:filter===t?'var(--blue)':'var(--bg3)',
+          color:filter===t?'#fff':'var(--text3)',
+          border:`1px solid ${filter===t?'var(--blue)':'var(--border)'}`,
+        }}>{t==='all'?`All (${reqs.length})`:t.replace('_',' ')}</button>
+      ))}
+    </div>
+
+    {/* Requirement cards */}
+    <div style={{display:'flex',flexDirection:'column',gap:10}}>
+      {filtered.map((r,i)=>(
+        <div key={i} style={{background:'var(--bg3)',border:'1px solid var(--border)',
+          borderRadius:'var(--r)',padding:'14px',borderLeft:`3px solid ${colors[r.type]||'var(--blue)'}`}}
+          className="animate-in" style2={{animationDelay:`${i*30}ms`}}>
+          <div style={{display:'flex',alignItems:'flex-start',gap:10,marginBottom:8}}>
+            <code style={{fontSize:11,color:'var(--text3)',fontFamily:'var(--mono)',
+              background:'var(--bg4)',padding:'2px 6px',borderRadius:4,flexShrink:0}}>{r.id}</code>
+            <span style={{fontWeight:600,fontSize:13,flex:1}}>{r.title}</span>
+            <Tag label={r.priority} color={priorities[r.priority]||'var(--text3)'} size={10}/>
+            <Tag label={r.type?.replace('_',' ')} color={colors[r.type]||'var(--text3)'} size={10}/>
+          </div>
+          <p style={{fontSize:12,color:'var(--text2)',lineHeight:1.6,marginBottom:8}}>{r.description}</p>
+          {r.acceptance_criteria?.length>0&&(
+            <div>
+              <div style={{fontSize:10,fontWeight:600,color:'var(--text3)',textTransform:'uppercase',
+                letterSpacing:'.06em',marginBottom:6}}>Acceptance criteria</div>
+              {r.acceptance_criteria.map((ac,j)=>(
+                <div key={j} style={{display:'flex',gap:8,marginBottom:4,fontSize:12,color:'var(--text2)'}}>
+                  <span style={{color:'var(--green)',flexShrink:0}}>✓</span>
+                  <span>{ac}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  </div>;
+}
+
+/* ─── Work items view ─────────────────────────────────────────────────────── */
+function WorkItemsView({items=[]}){
+  const typeColors={epic:'var(--purple)',story:'var(--blue)',task:'var(--teal)',bug:'var(--red)',spike:'var(--amber)'};
+  const statusColors={backlog:'var(--text3)','in_progress':'var(--blue)',done:'var(--green)',review:'var(--amber)'};
+
+  if(!items.length) return <div style={{color:'var(--text3)',fontSize:13,padding:'1rem'}}>No work items created yet.</div>;
+
+  return <div style={{display:'flex',flexDirection:'column',gap:8}}>
+    {items.map((wi,i)=>(
+      <div key={i} style={{background:'var(--bg3)',border:'1px solid var(--border)',
+        borderRadius:'var(--r)',padding:'12px 14px',display:'flex',alignItems:'center',gap:12}}>
+        <Tag label={wi.type} color={typeColors[wi.type]||'var(--text3)'} size={10}/>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontWeight:500,fontSize:13,marginBottom:2}}>{wi.title}</div>
+          <div style={{fontSize:11,color:'var(--text3)'}}>
+            {wi.linked_requirements?.join(', ')||'—'}
+            {wi.external_id&&<span style={{marginLeft:8,color:'var(--blue2)',fontFamily:'var(--mono)'}}>{wi.external_id}</span>}
+          </div>
+        </div>
+        {wi.external_url&&<ExternalLink href={wi.external_url}>View</ExternalLink>}
+        <Tag label={wi.status||'backlog'} color={statusColors[wi.status]||'var(--text3)'} size={10}/>
+      </div>
+    ))}
+  </div>;
+}
+
+/* ─── Design artifact view ───────────────────────────────────────────────── */
+function DesignView({design}){
+  const [tab,setTab]=useState('architecture');
+  if(!design) return <div style={{color:'var(--text3)',fontSize:13,padding:'1rem'}}>No design artifacts yet.</div>;
+
+  const tabs=[
+    {key:'architecture',label:'Architecture'},
+    {key:'api',label:`API (${design.api_contracts?.length||0})`},
+    {key:'models',label:`Data Models (${design.data_models?.length||0})`},
+    {key:'adrs',label:`ADRs (${design.adrs?.length||0})`},
+    {key:'stack',label:'Tech Stack'},
+  ];
+
+  return <div>
+    <div style={{display:'flex',gap:4,marginBottom:'1rem',flexWrap:'wrap'}}>
+      {tabs.map(t=><button key={t.key} onClick={()=>setTab(t.key)} style={{
+        padding:'5px 12px',borderRadius:20,fontSize:11,fontWeight:500,
+        background:tab===t.key?'var(--purple)':'var(--bg3)',
+        color:tab===t.key?'#fff':'var(--text3)',
+        border:`1px solid ${tab===t.key?'var(--purple)':'var(--border)'}`,
+      }}>{t.label}</button>)}
+    </div>
+
+    {tab==='architecture'&&<div>
+      <p style={{fontSize:13,color:'var(--text2)',lineHeight:1.7,marginBottom:'1rem'}}>{design.architecture_summary}</p>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:10}}>
+        {(design.components||[]).map((c,i)=>(
+          <div key={i} style={{background:'var(--bg3)',border:'1px solid var(--border)',
+            borderRadius:'var(--r)',padding:'12px',borderTop:`3px solid var(--purple)`}}>
+            <div style={{fontWeight:600,fontSize:13,marginBottom:4}}>{c.name}</div>
+            <Tag label={c.type} color="var(--purple)" size={10}/>
+            <p style={{fontSize:11,color:'var(--text3)',marginTop:6,lineHeight:1.5}}>{c.responsibility||c.tech}</p>
+          </div>
+        ))}
+      </div>
+    </div>}
+
+    {tab==='api'&&<div style={{display:'flex',flexDirection:'column',gap:8}}>
+      {(design.api_contracts||[]).map((ep,i)=>{
+        const mc={GET:'var(--green)',POST:'var(--blue)',PUT:'var(--amber)',DELETE:'var(--red)',PATCH:'var(--orange)'};
+        return <div key={i} style={{background:'var(--bg3)',border:'1px solid var(--border)',
+          borderRadius:'var(--r)',padding:'12px 14px',display:'flex',alignItems:'center',gap:12}}>
+          <code style={{fontSize:11,fontWeight:700,color:mc[ep.method]||'var(--text3)',
+            fontFamily:'var(--mono)',minWidth:52}}>{ep.method}</code>
+          <code style={{fontSize:12,color:'var(--text2)',fontFamily:'var(--mono)',flex:1}}>{ep.path}</code>
+          <span style={{fontSize:12,color:'var(--text3)'}}>{ep.description}</span>
+          {ep.auth&&<Tag label={ep.auth} color="var(--amber)" size={10}/>}
+        </div>;
+      })}
+    </div>}
+
+    {tab==='models'&&<div style={{display:'grid',gap:10}}>
+      {(design.data_models||[]).map((m,i)=>(
+        <div key={i} style={{background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:'var(--r)',overflow:'hidden'}}>
+          <div style={{padding:'10px 14px',background:'var(--bg4)',borderBottom:'1px solid var(--border)',
+            fontWeight:600,fontSize:13,color:'var(--teal)'}}>{m.entity}</div>
+          <div style={{padding:'10px 14px'}}>
+            {(m.fields||[]).map((f,j)=>(
+              <div key={j} style={{display:'flex',gap:12,padding:'4px 0',
+                borderBottom:j<m.fields.length-1?'1px solid var(--border)':'none',fontSize:12}}>
+                <span style={{color:'var(--text2)',minWidth:120,fontFamily:'var(--mono)'}}>{f.name}</span>
+                <code style={{color:'var(--teal)',fontFamily:'var(--mono)',fontSize:11}}>{f.type}</code>
+                {f.required&&<Tag label="required" color="var(--amber)" size={9}/>}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>}
+
+    {tab==='adrs'&&<div style={{display:'flex',flexDirection:'column',gap:10}}>
+      {(design.adrs||[]).map((adr,i)=>(
+        <div key={i} style={{background:'var(--bg3)',border:'1px solid var(--border)',
+          borderRadius:'var(--r)',padding:'14px',borderLeft:'3px solid var(--amber)'}}>
+          <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:8}}>
+            <code style={{fontSize:11,color:'var(--amber)',fontFamily:'var(--mono)'}}>{adr.id}</code>
+            <span style={{fontWeight:600,fontSize:13}}>{adr.title}</span>
+            {adr.status&&<Tag label={adr.status} color="var(--green)" size={10}/>}
+          </div>
+          {adr.decision&&<p style={{fontSize:12,color:'var(--text2)',lineHeight:1.6}}>{adr.decision}</p>}
+        </div>
+      ))}
+    </div>}
+
+    {tab==='stack'&&<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',gap:10}}>
+      {Object.entries(design.tech_stack||{}).map(([k,v])=>(
+        <div key={k} style={{background:'var(--bg3)',border:'1px solid var(--border)',
+          borderRadius:'var(--r)',padding:'12px'}}>
+          <div style={{fontSize:10,color:'var(--text3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:4}}>{k}</div>
+          <div style={{fontSize:14,fontWeight:600,color:'var(--text)'}}>{v}</div>
+        </div>
+      ))}
+    </div>}
+  </div>;
+}
+
+/* ─── Test report view ───────────────────────────────────────────────────── */
+function TestReportView({state}){
+  const total = (state.test_passed||0)+(state.test_failed||0);
+  const passRate = total>0 ? (state.test_passed/total*100) : 0;
+  const cov = state.test_coverage||0;
+
+  return <div>
+    {/* Stat grid */}
+    <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:'1.25rem'}}>
+      {[
+        {label:'Tests passed',value:state.test_passed||0,color:'var(--green)'},
+        {label:'Tests failed',value:state.test_failed||0,color:state.test_failed?'var(--red)':'var(--text3)'},
+        {label:'Pass rate',value:`${passRate.toFixed(0)}%`,color:passRate>=90?'var(--green)':passRate>=70?'var(--amber)':'var(--red)'},
+        {label:'Coverage',value:pct(cov),color:cov>=80?'var(--green)':cov>=60?'var(--amber)':'var(--red)'},
+      ].map(s=>(
+        <div key={s.label} style={{background:'var(--bg3)',border:'1px solid var(--border)',
+          borderRadius:'var(--r)',padding:'14px',textAlign:'center'}}>
+          <div style={{fontSize:22,fontWeight:700,color:s.color,fontVariantNumeric:'tabular-nums'}}>{s.value}</div>
+          <div style={{fontSize:11,color:'var(--text3)',marginTop:3}}>{s.label}</div>
+        </div>
+      ))}
+    </div>
+
+    {/* Coverage bar */}
+    <div style={{marginBottom:'1rem'}}>
+      <div style={{display:'flex',justifyContent:'space-between',fontSize:12,
+        color:'var(--text3)',marginBottom:6}}>
+        <span>Code coverage</span><span style={{fontFamily:'var(--mono)'}}>{pct(cov)}</span>
+      </div>
+      <div style={{height:8,background:'var(--bg3)',borderRadius:4,overflow:'hidden',border:'1px solid var(--border)'}}>
+        <div style={{width:pct(cov),height:'100%',borderRadius:4,transition:'width .5s ease',
+          background:cov>=80?'var(--green)':cov>=60?'var(--amber)':'var(--red)'}}/>
+      </div>
+    </div>
+  </div>;
+}
+
+/* ─── CI/CD view ─────────────────────────────────────────────────────────── */
+function CICDView({state}){
+  const status = state.ci_status;
+  const color = status==='success'?'var(--green)':status==='failure'?'var(--red)':'var(--amber)';
+
+  return <div>
+    <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:'1rem',
+      background:'var(--bg3)',border:`1px solid ${color}44`,borderRadius:'var(--r)',
+      padding:'14px',borderLeft:`3px solid ${color}`}}>
+      <div style={{fontSize:28}}>{status==='success'?'✅':status==='failure'?'❌':'⏳'}</div>
+      <div>
+        <div style={{fontWeight:600,fontSize:14,color}}>CI Pipeline — {status||'pending'}</div>
+        {state.ci_url&&<ExternalLink href={state.ci_url}>View pipeline run ↗</ExternalLink>}
+      </div>
+    </div>
+  </div>;
+}
+
+/* ─── Deployment view ────────────────────────────────────────────────────── */
+function DeploymentView({state}){
+  const envs=[
+    {label:'Staging',url:state.staging_url,color:'var(--amber)'},
+    {label:'Production',url:state.production_url,color:'var(--green)'},
+  ];
+  return <div style={{display:'grid',gap:10}}>
+    {envs.map(e=>(
+      <div key={e.label} style={{background:'var(--bg3)',border:`1px solid ${e.url?e.color+'44':'var(--border)'}`,
+        borderRadius:'var(--r)',padding:'16px',display:'flex',alignItems:'center',gap:12,
+        borderLeft:`3px solid ${e.url?e.color:'var(--border)'}`}}>
+        <div style={{fontSize:24}}>{e.url?'🟢':'⏸'}</div>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:600,fontSize:13,color:e.url?e.color:'var(--text3)'}}>{e.label}</div>
+          {e.url
+            ? <ExternalLink href={e.url}>{e.url}</ExternalLink>
+            : <span style={{fontSize:12,color:'var(--text3)'}}>Not deployed yet</span>}
+        </div>
+      </div>
+    ))}
+  </div>;
+}
+
+/* ─── Monitoring view ────────────────────────────────────────────────────── */
+function MonitoringView({config={}}){
+  if(!config||!Object.keys(config).length)
+    return <div style={{color:'var(--text3)',fontSize:13,padding:'1rem'}}>Monitoring not configured yet.</div>;
+
+  return <div style={{display:'flex',flexDirection:'column',gap:12}}>
+    {config.slos?.length>0&&<div>
+      <div style={{fontSize:11,fontWeight:600,color:'var(--text3)',textTransform:'uppercase',
+        letterSpacing:'.06em',marginBottom:8}}>SLO definitions</div>
+      {config.slos.map((s,i)=>(
+        <div key={i} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',
+          background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:'var(--r)',marginBottom:6}}>
+          <div style={{width:8,height:8,borderRadius:'50%',background:'var(--green)',flexShrink:0}}/>
+          <span style={{fontWeight:500,fontSize:13,flex:1}}>{s.name}</span>
+          <code style={{fontFamily:'var(--mono)',fontSize:12,color:'var(--green)'}}>{s.target}%</code>
+        </div>
+      ))}
+    </div>}
+    {config.alerts?.length>0&&<div>
+      <div style={{fontSize:11,fontWeight:600,color:'var(--text3)',textTransform:'uppercase',
+        letterSpacing:'.06em',marginBottom:8}}>Alert rules</div>
+      {config.alerts.map((a,i)=>(
+        <div key={i} style={{padding:'10px 14px',background:'var(--bg3)',border:'1px solid var(--border)',
+          borderRadius:'var(--r)',marginBottom:6,display:'flex',gap:10,alignItems:'center'}}>
+          <span style={{fontSize:14}}>🔔</span>
+          <span style={{fontWeight:500,fontSize:13,flex:1}}>{a.name}</span>
+          {a.severity&&<Tag label={a.severity} color={a.severity==='critical'?'var(--red)':'var(--amber)'} size={10}/>}
+          {a.condition&&<code style={{fontSize:11,color:'var(--text3)',fontFamily:'var(--mono)'}}>{a.condition}</code>}
+        </div>
+      ))}
+    </div>}
+  </div>;
+}
+
+/* ─── Tool calls log ─────────────────────────────────────────────────────── */
+function ToolCallsLog({calls=[]}){
+  if(!calls.length) return <div style={{color:'var(--text3)',fontSize:13}}>No tool calls recorded.</div>;
+  const serviceColors={
+    gitea:'var(--green)',plane:'var(--purple)',outline:'var(--blue)',
+    mattermost:'var(--teal)',minio:'var(--orange)',zammad:'var(--amber)',penpot:'var(--cyan)',
+  };
+  return <div style={{display:'flex',flexDirection:'column',gap:6}}>
+    {calls.map((c,i)=>{
+      const service=c.tool?.split('_')[0]||'';
+      const color=serviceColors[service]||'var(--text3)';
+      return <div key={i} style={{display:'flex',gap:10,padding:'8px 12px',
+        background:'var(--bg3)',border:'1px solid var(--border)',
+        borderRadius:'var(--r)',alignItems:'flex-start'}}>
+        <code style={{fontSize:11,color,fontFamily:'var(--mono)',whiteSpace:'nowrap',
+          background:`${color}18`,padding:'2px 7px',borderRadius:4}}>{c.tool}</code>
+        {c.input&&<code style={{fontSize:10,color:'var(--text3)',fontFamily:'var(--mono)',
+          overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>
+          {JSON.stringify(c.input).slice(0,120)}
+        </code>}
+      </div>;
+    })}
+  </div>;
+}
+
+/* ─── Quality gates view ─────────────────────────────────────────────────── */
+function QualityGatesView({gates=[]}){
+  if(!gates.length) return <div style={{color:'var(--text3)',fontSize:13,padding:'1rem'}}>No quality gates evaluated yet.</div>;
+  return <div style={{display:'flex',flexDirection:'column',gap:8}}>
+    {gates.map((g,i)=>(
+      <div key={i} style={{background:'var(--bg3)',border:`1px solid ${g.passed?'var(--green)':'var(--red)'}44`,
+        borderRadius:'var(--r)',padding:'14px',borderLeft:`3px solid ${g.passed?'var(--green)':'var(--red)'}`}}
+        className="animate-in">
+        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
+          <span style={{fontSize:18}}>{g.passed?'✅':'❌'}</span>
+          <span style={{fontWeight:600,fontSize:13,flex:1}}>{g.gate_name?.replace(/_/g,' ')}</span>
+          <Tag label={g.blocking?'blocking':'non-blocking'} color={g.blocking?'var(--red)':'var(--amber)'} size={10}/>
+          <div style={{textAlign:'right'}}>
+            <div style={{fontSize:13,fontWeight:700,color:g.passed?'var(--green)':'var(--red)',fontFamily:'var(--mono)'}}>
+              {(g.score*100).toFixed(0)}%
+            </div>
+          </div>
+        </div>
+        {/* Score bar */}
+        <div style={{height:4,background:'var(--bg4)',borderRadius:2,marginBottom:10}}>
+          <div style={{width:`${g.score*100}%`,height:'100%',borderRadius:2,
+            background:g.passed?'var(--green)':'var(--red)',transition:'width .4s ease'}}/>
+        </div>
+        {/* Checks */}
+        {g.checks?.map((c,j)=>(
+          <div key={j} style={{display:'flex',gap:8,alignItems:'baseline',padding:'3px 0',
+            fontSize:12,color:c.passed?'var(--text2)':'var(--red)'}}>
+            <span style={{flexShrink:0}}>{c.passed?'✓':'✗'}</span>
+            <span style={{flex:1}}>{c.detail}</span>
+          </div>
+        ))}
+      </div>
+    ))}
+  </div>;
+}
+
+/* ─── Final summary view ─────────────────────────────────────────────────── */
+function FinalSummaryView({state,runId}){
+  const gates = state.quality_gates||[];
+  const gatesPassed = gates.filter(g=>g.passed).length;
+
+  const artifacts=[
+    {label:'Repository',icon:'📦',url:state.code_repo_url},
+    {label:'Pull Request',icon:'🔀',url:state.code_pr_url},
+    {label:'CI Pipeline',icon:'⚙',url:state.ci_url},
+    {label:'Staging',icon:'🌿',url:state.staging_url},
+    {label:'Production',icon:'🚀',url:state.production_url},
+    {label:'Documentation',icon:'📚',url:state.documentation_url},
+  ].filter(a=>a.url);
+
+  const stats=[
+    {label:'Requirements',value:state.requirements_count||state.requirements?.length||0,color:'var(--blue)'},
+    {label:'Work items',value:state.work_items_count||state.work_items?.length||0,color:'var(--purple)'},
+    {label:'Test coverage',value:pct(state.test_coverage||0),color:'var(--teal)'},
+    {label:'Gates passed',value:`${gatesPassed}/${gates.length}`,color:gatesPassed===gates.length?'var(--green)':'var(--amber)'},
+    {label:'CI status',value:state.ci_status||'—',color:state.ci_status==='success'?'var(--green)':'var(--amber)'},
+  ];
+
+  const download=()=>{
+    const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=`sdlc-run-${runId?.slice(0,8)}.json`;
+    a.click();
+  };
+
+  return <div>
+    {/* Stats */}
+    <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:10,marginBottom:'1.5rem'}}>
+      {stats.map(s=>(
+        <div key={s.label} style={{background:'var(--bg3)',border:'1px solid var(--border)',
+          borderRadius:'var(--r)',padding:'14px',textAlign:'center'}}>
+          <div style={{fontSize:20,fontWeight:700,color:s.color,fontVariantNumeric:'tabular-nums'}}>{s.value}</div>
+          <div style={{fontSize:11,color:'var(--text3)',marginTop:3}}>{s.label}</div>
+        </div>
+      ))}
+    </div>
+
+    {/* Artifact links */}
+    {artifacts.length>0&&<div style={{marginBottom:'1.5rem'}}>
+      <div style={{fontSize:11,fontWeight:600,color:'var(--text3)',textTransform:'uppercase',
+        letterSpacing:'.06em',marginBottom:8}}>Artifact links</div>
+      <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
+        {artifacts.map(a=>(
+          <a key={a.label} href={a.url} target="_blank" rel="noreferrer"
+            style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 14px',
+              background:'var(--bg3)',border:'1px solid var(--border2)',borderRadius:'var(--r)',
+              color:'var(--blue2)',fontSize:13,fontWeight:500,transition:'all .15s'}}>
+            {a.icon} {a.label} <span style={{fontSize:10,opacity:.7}}>↗</span>
+          </a>
+        ))}
+      </div>
+    </div>}
+
+    {/* Download */}
+    <button onClick={download} style={{padding:'9px 18px',background:'var(--bg3)',
+      color:'var(--text2)',border:'1px solid var(--border2)',borderRadius:'var(--r)',
+      fontSize:13,fontWeight:500,display:'flex',alignItems:'center',gap:8}}>
+      <span>⬇</span> Export full run as JSON
+    </button>
+  </div>;
+}
+
+/* ─── Phase detail panel ─────────────────────────────────────────────────── */
+function PhaseDetail({phaseKey,state,events=[],gates=[]}){
+  const [tab,setTab]=useState('output');
+  const ph = phaseOf(phaseKey);
+  const phaseEvents = events.filter(e=>e.phase===phaseKey);
+  const latestEvent = phaseEvents[phaseEvents.length-1];
+  const allToolCalls = phaseEvents.flatMap(e=>e.tool_calls||[]);
+
+  const tabs=[
+    {key:'output',label:'Output'},
+    {key:'events',label:`Events (${phaseEvents.length})`},
+    {key:'tools',label:`Tool Calls (${allToolCalls.length})`},
+  ];
+
+  const renderOutput=()=>{
+    switch(phaseKey){
+      case 'requirements': return <RequirementsView reqs={state.requirements||[]}/>;
+      case 'design':       return <DesignView design={state.design}/>;
+      case 'planning':     return <WorkItemsView items={state.work_items||[]}/>;
+      case 'development':  return <div style={{display:'flex',flexDirection:'column',gap:10}}>
+        {[['Repository',state.code_repo_url],['Branch',state.code_branch],['Pull Request',state.code_pr_url]]
+          .map(([l,v])=><div key={l} style={{display:'flex',gap:12,alignItems:'center',
+            padding:'10px 14px',background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:'var(--r)'}}>
+            <span style={{fontSize:12,color:'var(--text3)',minWidth:80}}>{l}</span>
+            {v?<ExternalLink href={v.startsWith('http')?v:undefined}><code style={{fontFamily:'var(--mono)',fontSize:12}}>{v}</code></ExternalLink>
+              :<span style={{color:'var(--text3)',fontSize:12}}>—</span>}
+          </div>)}
+      </div>;
+      case 'testing':      return <TestReportView state={state}/>;
+      case 'ci_cd':        return <CICDView state={state}/>;
+      case 'deployment':   return <DeploymentView state={state}/>;
+      case 'monitoring':   return <MonitoringView config={state.monitoring_config}/>;
+      case 'documentation':return <div style={{display:'flex',flexDirection:'column',gap:8}}>
+        {state.documentation_url&&<div style={{padding:'14px',background:'var(--bg3)',
+          border:'1px solid var(--lime)44',borderRadius:'var(--r)',borderLeft:'3px solid var(--lime)'}}>
+          <div style={{fontWeight:600,fontSize:13,marginBottom:4}}>Wiki published</div>
+          <ExternalLink href={state.documentation_url}>{state.documentation_url}</ExternalLink>
+        </div>}
+      </div>;
+      case 'done':         return <FinalSummaryView state={state} runId={state.run_id}/>;
+      default:             return <div style={{color:'var(--text3)',fontSize:13}}>Phase output will appear here.</div>;
+    }
+  };
+
+  return <div style={{flex:1,minWidth:0}}>
+    {/* Phase header */}
+    <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:'1.25rem',
+      padding:'16px',background:'var(--bg2)',border:'1px solid var(--border)',
+      borderRadius:'var(--r2)',borderLeft:`4px solid ${ph.color}`}}>
+      <div style={{fontSize:28}}>{ph.icon}</div>
+      <div style={{flex:1}}>
+        <div style={{fontSize:18,fontWeight:700,color:ph.color}}>{ph.label}</div>
+        <div style={{fontSize:12,color:'var(--text3)',marginTop:2}}>{ph.desc}</div>
+      </div>
+      {latestEvent&&<Tag label={latestEvent.status} color={
+        latestEvent.status==='completed'?'var(--green)':
+        latestEvent.status==='failed'?'var(--red)':
+        latestEvent.status==='started'?'var(--blue)':'var(--amber)'} />}
+    </div>
+
+    {/* Tabs */}
+    <div style={{display:'flex',gap:4,marginBottom:'1rem',borderBottom:'1px solid var(--border)',paddingBottom:8}}>
+      {tabs.map(t=><button key={t.key} onClick={()=>setTab(t.key)} style={{
+        padding:'6px 14px',borderRadius:'var(--r)',fontSize:12,fontWeight:500,
+        background:tab===t.key?ph.color:'transparent',
+        color:tab===t.key?'#fff':'var(--text3)',
+        border:`1px solid ${tab===t.key?ph.color:'transparent'}`,
+      }}>{t.label}</button>)}
+    </div>
+
+    {/* Tab content */}
+    <div style={{animation:'fade-in .2s ease'}}>
+      {tab==='output'&&renderOutput()}
+
+      {tab==='events'&&<div style={{display:'flex',flexDirection:'column',gap:8}}>
+        {phaseEvents.length===0
+          ? <div style={{color:'var(--text3)',fontSize:13}}>No events yet for this phase.</div>
+          : phaseEvents.map((ev,i)=>(
+            <div key={i} className="animate-in" style={{
+              background:'var(--bg3)',border:'1px solid var(--border)',
+              borderRadius:'var(--r)',padding:'12px 14px',
+              borderLeft:`3px solid ${ev.status==='completed'?'var(--green)':ev.status==='failed'?'var(--red)':'var(--blue)'}`}}>
+              <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:6}}>
+                <Tag label={ev.status} color={ev.status==='completed'?'var(--green)':ev.status==='failed'?'var(--red)':'var(--blue)'} size={10}/>
+                <span style={{fontSize:11,color:'var(--text3)',fontFamily:'var(--mono)',marginLeft:'auto'}}>{fmt(ev.timestamp)}</span>
+              </div>
+              <p style={{fontSize:12,color:'var(--text2)',lineHeight:1.6}}>{ev.message}</p>
+              {ev.artifacts&&Object.keys(ev.artifacts).length>0&&
+                <details style={{marginTop:8}}>
+                  <summary style={{fontSize:11,color:'var(--text3)',cursor:'pointer'}}>
+                    Artifacts ({Object.keys(ev.artifacts).length} keys)
+                  </summary>
+                  <div style={{marginTop:6}}>
+                    <CodeBlock content={ev.artifacts} maxH={200}/>
+                  </div>
+                </details>
+              }
+            </div>
+          ))}
+      </div>}
+
+      {tab==='tools'&&<ToolCallsLog calls={allToolCalls}/>}
+    </div>
+  </div>;
+}
+
+/* ─── Header bar ─────────────────────────────────────────────────────────── */
+function Header({runId,projectName,status,currentPhase,onBack,onNewRun}){
+  const ph = phaseOf(currentPhase);
+  const statusColors={connected:'var(--blue)',running:'var(--amber)',done:'var(--green)',
+    failed:'var(--red)',error:'var(--red)',disconnected:'var(--text3)',queued:'var(--blue)'};
+  const sc = statusColors[status]||'var(--text3)';
+
+  return <div style={{background:'var(--bg2)',borderBottom:'1px solid var(--border)',
+    padding:'0 1.5rem',height:52,display:'flex',alignItems:'center',gap:16,flexShrink:0}}>
+    <button onClick={onBack} style={{padding:'5px 10px',background:'var(--bg3)',color:'var(--text3)',
+      border:'1px solid var(--border)',borderRadius:'var(--r)',fontSize:12}}>← Back</button>
+
+    <div style={{width:1,height:24,background:'var(--border)'}}/>
+
+    <div style={{display:'flex',alignItems:'center',gap:8,flex:1,minWidth:0}}>
+      <span style={{fontSize:16}}>{ph.icon}</span>
+      <div style={{minWidth:0}}>
+        <div style={{fontWeight:600,fontSize:14,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+          {projectName}
+        </div>
+        <div style={{fontSize:10,color:'var(--text3)',fontFamily:'var(--mono)'}}>{runId?.slice(0,12)}…</div>
+      </div>
+    </div>
+
+    <div style={{display:'flex',alignItems:'center',gap:6}}>
+      <div style={{width:7,height:7,borderRadius:'50%',background:sc,
+        boxShadow:['running','connected'].includes(status)?`0 0 0 3px ${sc}33`:'none',
+        animation:status==='running'?'pulse-ring 1.5s ease infinite':'none'}}/>
+      <span style={{fontSize:11,fontWeight:600,color:sc,textTransform:'uppercase',letterSpacing:'.04em'}}>{status}</span>
+    </div>
+
+    <button onClick={onNewRun} style={{padding:'5px 12px',background:'var(--blue)',color:'#fff',
+      border:'none',borderRadius:'var(--r)',fontSize:12,fontWeight:500}}>+ New Run</button>
+  </div>;
+}
+
+/* ─── Live Log Panel ─────────────────────────────────────────────────────── */
+function LiveLogPanel({logs,logsEndRef}){
+  const levelStyle={
+    info:    {color:'var(--text2)',    icon:'·'},
+    success: {color:'var(--green)',    icon:'✓'},
+    warning: {color:'var(--amber)',    icon:'⚠'},
+    error:   {color:'var(--red)',      icon:'✗'},
+    token:   {color:'var(--text3)',    icon:' '},
+  };
+
+  // Group consecutive token messages into one line
+  const grouped=[];
+  let tokenBuf='',tokenPhase='',tokenElapsed=0;
+  const flushTokens=()=>{
+    if(tokenBuf.trim()){
+      grouped.push({level:'token',phase:tokenPhase,
+        message:tokenBuf,elapsed:tokenElapsed,isToken:true});
+      tokenBuf=''; tokenPhase=''; tokenElapsed=0;
+    }
+  };
+  for(const l of logs){
+    if(l.level==='token'){
+      tokenPhase=l.phase; tokenElapsed=l.elapsed;
+      tokenBuf+=l.message;
+    } else {
+      flushTokens();
+      grouped.push(l);
+    }
+  }
+  flushTokens();
+
+  if(grouped.length===0) return (
+    <div style={{padding:'2rem',textAlign:'center'}}>
+      <div style={{fontSize:32,marginBottom:12}}>⏳</div>
+      <div style={{color:'var(--text3)',fontSize:13}}>
+        Waiting for pipeline to start...
+      </div>
+      <div style={{color:'var(--text3)',fontSize:11,marginTop:8}}>
+        Logs will stream here live as each phase runs
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{height:'100%',overflowY:'auto',fontFamily:'var(--mono)',
+      fontSize:12,padding:'0.75rem 1rem'}}>
+      {grouped.map((l,i)=>{
+        const st = levelStyle[l.level] || levelStyle.info;
+        if(l.isToken) return (
+          <div key={i} style={{padding:'2px 0',borderBottom:'1px solid var(--border)',
+            marginBottom:4}}>
+            <div style={{fontSize:10,color:'var(--text3)',marginBottom:3}}>
+              [{l.elapsed}s] {l.phase?.toUpperCase()} · LLM generating:
+            </div>
+            <div style={{color:'var(--text2)',whiteSpace:'pre-wrap',
+              wordBreak:'break-all',lineHeight:1.6,maxHeight:200,overflowY:'auto',
+              background:'var(--bg3)',padding:'6px 8px',borderRadius:4}}>
+              {l.message}
+            </div>
+          </div>
+        );
+
+        // Section dividers (lines that start with ─)
+        if(l.message?.startsWith('─') || l.message?.includes('───')){
+          return <div key={i} style={{borderTop:'1px solid var(--border)',
+            margin:'6px 0',opacity:.4}}/>;
+        }
+
+        // Section headers (lines that have │)
+        if(l.message?.includes(' │ ')){
+          const parts=l.message.split(' │ ');
+          return (
+            <div key={i} style={{display:'flex',gap:8,padding:'4px 0',
+              borderBottom:'1px solid var(--border)',marginBottom:4}}>
+              <span style={{color:'var(--text3)',fontSize:10,minWidth:40}}>
+                [{l.elapsed}s]
+              </span>
+              <span style={{color:'var(--blue)',fontWeight:600}}>{parts[0]}</span>
+              <span style={{color:'var(--text3)'}}>│</span>
+              <span style={{color:'var(--text2)'}}>{parts.slice(1).join(' │ ')}</span>
+            </div>
+          );
+        }
+
+        return (
+          <div key={i} style={{display:'flex',gap:8,padding:'2px 0',
+            alignItems:'flex-start',lineHeight:1.5}}>
+            <span style={{color:'var(--text3)',fontSize:10,minWidth:40,flexShrink:0}}>
+              [{(l.elapsed||0).toFixed(1)}s]
+            </span>
+            <span style={{color:st.color,flexShrink:0}}>{st.icon}</span>
+            <span style={{color:'var(--text3)',fontSize:10,minWidth:80,flexShrink:0}}>
+              {l.phase?.toUpperCase().replace(/_/g,' ')}
+            </span>
+            <span style={{color:'var(--text2)',flex:1,wordBreak:'break-word'}}>
+              {l.message}
+            </span>
+          </div>
+        );
+      })}
+      <div ref={logsEndRef}/>
+    </div>
+  );
+}
+
+/* ─── Main dashboard ─────────────────────────────────────────────────────── */
+function Dashboard({runId,projectName,onBack,onNewRun}){
+  const [status,setStatus]=useState('connecting');
+  const [state,setState]=useState({current_phase:'init',requirements:[],work_items:[],
+    quality_gates:[],monitoring_config:{},test_coverage:0,test_passed:0,test_failed:0});
+  const [events,setEvents]=useState([]);
+  const [logs,setLogs]=useState([]);       // live log lines from backend
+  const [selectedPhase,setSelectedPhase]=useState('init');
+  const [activeTab,setActiveTab]=useState('logs'); // default to logs tab
+  const wsRef=useRef(null);
+  const logsEndRef=useRef(null);
+  const scrollLogs=()=>logsEndRef.current?.scrollIntoView({behavior:'smooth'});
+
+  // Phase statuses derived from events
+  const phaseStatuses = useMemo(()=>{
+    const m={};
+    // Build from events first
+    for(const ev of events){
+      if(!m[ev.phase]||ev.status==='completed'||ev.status==='failed'){
+        m[ev.phase]=ev;
+      }
+    }
+    // Override: any phase before current_phase is definitively "completed"
+    // This fixes the spinner stuck case when events are missing/delayed
+    const currentIdx = PHASE_IDX[state.current_phase]??0;
+    PHASES.slice(0,currentIdx).forEach(ph=>{
+      if(!m[ph.key] || m[ph.key].status==='started'){
+        m[ph.key] = {...(m[ph.key]||{}), phase:ph.key, status:'completed'};
+      }
+    });
+    return m;
+  },[events, state.current_phase]);
+
+  // Auto-select current phase as it changes
+  useEffect(()=>{
+    if(state.current_phase) setSelectedPhase(state.current_phase);
+  },[state.current_phase]);
+
+  useEffect(()=>{
+    const ws=new WebSocket(`ws://localhost:8000/ws/${runId}`);
+    wsRef.current=ws;
+    ws.onopen=()=>setStatus('connected');
+    ws.onclose=()=>setStatus('disconnected');
+    ws.onerror=()=>setStatus('error');
+    ws.onmessage=e=>{
+      const msg=JSON.parse(e.data);
+      if(msg.type==='ping') return;
+      // Debug: log every non-ping message to browser console
+      if(msg.type==='phase_update'||msg.type==='terminal'||msg.type==='log'){
+        console.log('[WS]', msg.type, '| phase:', msg.phase||msg.state?.current_phase,
+          '| current_phase in state:', msg.state?.current_phase,
+          '| next_phase:', msg.next_phase);
+      }
+      if(msg.type==='init'){
+        setStatus(msg.status||'running');
+        if(msg.state) setState(s=>({...s,...msg.state}));
+        if(msg.events) setEvents(msg.events||[]);
+        if(msg.logs) setLogs(msg.logs||[]);
+      }
+      if(msg.type==='phase_update'){
+        setStatus('running');
+        if(msg.state){
+          setState(s=>{
+            const updated = {...s, ...msg.state};
+            // Always update current_phase from the snapshot
+            if(msg.state.current_phase) updated.current_phase = msg.state.current_phase;
+            // Also update from msg.phase (the node that just ran)
+            if(msg.phase && msg.phase !== 'init') updated.current_phase = msg.phase;
+            return updated;
+          });
+        }
+        if(msg.events) setEvents(ev=>[...ev,...(msg.events||[])]);
+        // Show routing transition in logs
+        if(msg.next_phase && msg.next_phase !== 'done' && msg.phase !== msg.next_phase){
+          const label = PHASES.find(p=>p.key===msg.next_phase)?.label || msg.next_phase;
+          setLogs(l=>[...l,{
+            level:'info', phase:msg.phase,
+            message:`→ Advancing to ${label} phase…`,
+            elapsed:0, ts:Date.now()
+          }]);
+          setTimeout(scrollLogs,50);
+        }
+        if(msg.next_phase === 'done'){
+          setLogs(l=>[...l,{level:'success',phase:msg.phase,
+            message:'→ All phases complete!',elapsed:0,ts:Date.now()}]);
+          setTimeout(scrollLogs,50);
+        }
+      }
+      if(msg.type==='log'){
+        setLogs(l=>[...l,{level:msg.level,phase:msg.phase,message:msg.message,
+          elapsed:msg.elapsed,ts:msg.ts}]);
+        setTimeout(scrollLogs,50);
+      }
+      if(msg.type==='terminal'){
+        setStatus(msg.status);
+        if(msg.final_state) setState(s=>({...s,...msg.final_state}));
+        if(msg.final_state?.current_phase==='done'){
+          setSelectedPhase('done');
+          setActiveTab('events');
+        }
+      }
+      if(msg.type==='phase_rerun_complete'){
+        setStatus(msg.status==='failed'?'failed':'done');
+        if(msg.state) setState(s=>({...s,...msg.state}));
+        // Auto-switch to the re-run phase detail
+        if(msg.phase) setSelectedPhase(msg.phase);
+      }
+    };
+    return()=>ws.close();
+  },[runId]);
+
+  // Fetch initial state on mount
+  useEffect(()=>{
+    fetch(`${API}/api/runs/${runId}`)
+      .then(r=>r.json())
+      .then(d=>{
+        if(d.state) setState(s=>({...s,...d.state}));
+        if(d.events) setEvents(d.events||[]);
+        if(d.logs)   setLogs(d.logs||[]);
+        setStatus(d.status||'running');
+      }).catch(()=>{});
+  },[runId]);
+
+  const currentIdx = PHASE_IDX[state.current_phase]??0;
+
+  return <div style={{display:'flex',flexDirection:'column',height:'100vh',overflow:'hidden'}}>
+    <Header runId={runId} projectName={projectName} status={status}
+      currentPhase={state.current_phase} onBack={onBack} onNewRun={onNewRun}/>
+
+    {/* Progress strip */}
+    <div style={{height:3,background:'var(--bg3)',flexShrink:0}}>
+      <div style={{
+        height:'100%',transition:'width .4s ease',
+        background:`linear-gradient(90deg,var(--blue),var(--purple))`,
+        width:`${Math.min(100,(currentIdx/9)*100)}%`
+      }}/>
+    </div>
+
+    {/* Tab bar — Logs / Pipeline */}
+    <div style={{display:'flex',gap:0,borderBottom:'1px solid var(--border)',
+      background:'var(--bg2)',flexShrink:0,paddingLeft:'1rem'}}>
+      {[['logs','⚡ Live Logs'],['pipeline','🏗 Pipeline']].map(([t,l])=>(
+        <button key={t} onClick={()=>setActiveTab(t)} style={{
+          padding:'8px 18px',fontSize:12,fontWeight:500,border:'none',
+          borderBottom:`2px solid ${activeTab===t?'var(--blue)':'transparent'}`,
+          background:'transparent',color:activeTab===t?'var(--blue)':'var(--text3)',
+          cursor:'pointer',transition:'all .15s',
+        }}>{l}
+        {t==='logs'&&<span style={{marginLeft:6,fontSize:10,background:'var(--blue)',
+          color:'#fff',padding:'1px 5px',borderRadius:8}}>{logs.length}</span>}
+        </button>
+      ))}
+    </div>
+
+    {/* Body */}
+    <div style={{flex:1,display:'flex',overflow:'hidden'}}>
+
+      {/* ── LIVE LOGS TAB ────────────────────────────────────────────────── */}
+      {activeTab==='logs'&&<>
+        {/* Log stream — full width minus stats sidebar */}
+        <div style={{flex:1,overflowY:'auto',background:'var(--bg)',display:'flex',flexDirection:'column'}}>
+          <LiveLogPanel logs={logs} logsEndRef={logsEndRef}/>
+        </div>
+
+        {/* Stats sidebar */}
+        <div style={{width:240,flexShrink:0,borderLeft:'1px solid var(--border)',
+          overflowY:'auto',padding:'1rem',background:'var(--bg2)'}}>
+          <div style={{fontSize:10,fontWeight:600,color:'var(--text3)',textTransform:'uppercase',
+            letterSpacing:'.06em',marginBottom:10}}>Live stats</div>
+          {[
+            {label:'Current phase',value:state.current_phase?.replace(/_/g,' ')||'init',color:'var(--blue)'},
+            {label:'Requirements',value:state.requirements?.length||state.requirements_count||0,color:'var(--blue)'},
+            {label:'Work items',value:state.work_items?.length||state.work_items_count||0,color:'var(--purple)'},
+            {label:'Coverage',value:pct(state.test_coverage||0),color:'var(--teal)'},
+            {label:'Log lines',value:logs.length,color:'var(--text3)'},
+          ].map(s=><div key={s.label} style={{display:'flex',justifyContent:'space-between',
+            alignItems:'center',padding:'7px 10px',background:'var(--bg3)',
+            border:'1px solid var(--border)',borderRadius:'var(--r)',marginBottom:6}}>
+            <span style={{fontSize:11,color:'var(--text3)'}}>{s.label}</span>
+            <span style={{fontSize:13,fontWeight:600,color:s.color,fontFamily:'var(--mono)'}}>{s.value}</span>
+          </div>)}
+
+          <div style={{marginTop:'1.5rem',fontSize:10,fontWeight:600,color:'var(--text3)',
+            textTransform:'uppercase',letterSpacing:'.06em',marginBottom:8}}>Phases</div>
+          {['requirements','design','planning','development','testing',
+            'ci_cd','deployment','monitoring','documentation'].map(ph=>{
+            const ps=phaseStatuses[ph];
+            const color=ps?.status==='completed'?'var(--green)':ps?.status==='failed'?'var(--red)':
+              state.current_phase===ph?'var(--amber)':'var(--text3)';
+            return <div key={ph} style={{display:'flex',alignItems:'center',gap:8,padding:'4px 0',
+              fontSize:11}}>
+              <div style={{width:6,height:6,borderRadius:'50%',background:color,flexShrink:0}}/>
+              <span style={{color,flex:1}}>{ph.replace(/_/g,' ')}</span>
+              {ps&&<span style={{fontSize:10,color:'var(--text3)'}}>{ps.status}</span>}
+            </div>;
+          })}
+
+          {(state.services_enabled||[]).length>0&&<>
+            <div style={{marginTop:'1.5rem',fontSize:10,fontWeight:600,color:'var(--text3)',
+              textTransform:'uppercase',letterSpacing:'.06em',marginBottom:8}}>Services</div>
+            <div style={{display:'flex',flexWrap:'wrap',gap:5}}>
+              {(state.services_enabled||[]).map(s=><Tag key={s} label={s} color="var(--green)" size={10}/>)}
+            </div>
+          </>}
+        </div>
+      </>}
+
+      {/* ── PIPELINE TAB ──────────────────────────────────────────────────── */}
+      {activeTab==='pipeline'&&<>
+        {/* Left sidebar — phase stepper */}
+        <div style={{width:220,flexShrink:0,borderRight:'1px solid var(--border)',
+          overflowY:'auto',padding:'1rem .75rem',background:'var(--bg2)'}}>
+          <div style={{fontSize:10,fontWeight:600,color:'var(--text3)',textTransform:'uppercase',
+            letterSpacing:'.06em',marginBottom:10,paddingLeft:4}}>Pipeline phases</div>
+          <PhaseStepper currentPhase={state.current_phase} phaseStatuses={phaseStatuses}
+            onSelect={setSelectedPhase} selectedPhase={selectedPhase}
+            runId={runId} pipelineStatus={status}
+            onRerunPhase={ph=>{ setActiveTab('logs'); setSelectedPhase(ph); }}/>
+        </div>
+
+        {/* Right — phase detail */}
+        <div style={{flex:1,overflowY:'auto',padding:'1.5rem'}}>
+          <PhaseDetail phaseKey={selectedPhase} state={state}
+            events={events} gates={state.quality_gates||[]}/>
+        </div>
+
+        {/* Far right — quality gates sidebar */}
+        <div style={{width:280,flexShrink:0,borderLeft:'1px solid var(--border)',
+          overflowY:'auto',padding:'1rem',background:'var(--bg2)'}}>
+        <div style={{fontSize:10,fontWeight:600,color:'var(--text3)',textTransform:'uppercase',
+          letterSpacing:'.06em',marginBottom:10}}>Quality gates</div>
+        <QualityGatesView gates={state.quality_gates||[]}/>
+
+        {/* Live stats mini-cards */}
+        <div style={{marginTop:'1.5rem',fontSize:10,fontWeight:600,color:'var(--text3)',
+          textTransform:'uppercase',letterSpacing:'.06em',marginBottom:10}}>Live stats</div>
+        {[
+          {label:'Requirements',value:state.requirements?.length||state.requirements_count||0,color:'var(--blue)'},
+          {label:'Work items',value:state.work_items?.length||state.work_items_count||0,color:'var(--purple)'},
+          {label:'Coverage',value:pct(state.test_coverage||0),color:'var(--teal)'},
+          {label:'CI',value:state.ci_status||'—',color:state.ci_status==='success'?'var(--green)':'var(--text3)'},
+        ].map(s=><div key={s.label} style={{display:'flex',justifyContent:'space-between',
+          alignItems:'center',padding:'7px 10px',background:'var(--bg3)',
+          border:'1px solid var(--border)',borderRadius:'var(--r)',marginBottom:6}}>
+          <span style={{fontSize:12,color:'var(--text3)'}}>{s.label}</span>
+          <span style={{fontSize:13,fontWeight:600,color:s.color,fontFamily:'var(--mono)'}}>{s.value}</span>
+        </div>)}
+
+        {/* Services */}
+        {(state.services_enabled||[]).length>0&&<>
+          <div style={{marginTop:'1.5rem',fontSize:10,fontWeight:600,color:'var(--text3)',
+            textTransform:'uppercase',letterSpacing:'.06em',marginBottom:8}}>Active services</div>
+          <div style={{display:'flex',flexWrap:'wrap',gap:5}}>
+            {(state.services_enabled||[]).map(s=><Tag key={s} label={s} color="var(--green)" size={10}/>)}
+          </div>
+        </>}
+      </div>
+      </>}
+
+    </div>
+  </div>;
+}
+
+/* ─── Run list ────────────────────────────────────────────────────────────── */
+function RunList({onSelect,onNew}){
+  const [runs,setRuns]=useState([]);
+  const [loading,setLoading]=useState(true);
+  useEffect(()=>{
+    const load=()=>fetch(`${API}/api/runs`).then(r=>r.json()).then(setRuns).catch(()=>{});
+    load().finally(()=>setLoading(false));
+    const t=setInterval(load,3000);
+    return()=>clearInterval(t);
+  },[]);
+  const sc={done:'var(--green)',running:'var(--amber)',failed:'var(--red)',error:'var(--red)',queued:'var(--blue)'};
+  return <div style={{maxWidth:720,margin:'0 auto',padding:'2rem 1rem'}}>
+    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'1.5rem'}}>
+      <div>
+        <h2 style={{fontSize:22,fontWeight:700,letterSpacing:'-.01em'}}>Pipeline Runs</h2>
+        <p style={{fontSize:13,color:'var(--text3)',marginTop:3}}>{runs.length} total</p>
+      </div>
+      <button onClick={onNew} style={{padding:'9px 18px',background:'linear-gradient(135deg,#2563eb,#7c3aed)',
+        color:'#fff',borderRadius:'var(--r)',fontWeight:600,fontSize:13}}>+ New Run</button>
+    </div>
+    {loading&&[1,2,3].map(i=><div key={i} className="skeleton" style={{height:72,marginBottom:8}}/>)}
+    {!loading&&runs.length===0&&<Card style={{padding:'3rem',textAlign:'center'}}>
+      <div style={{fontSize:40,marginBottom:12}}>🚀</div>
+      <p style={{color:'var(--text2)',marginBottom:'1rem'}}>No runs yet. Upload a requirements document to start.</p>
+      <button onClick={onNew} style={{padding:'10px 20px',background:'var(--blue)',color:'#fff',
+        borderRadius:'var(--r)',fontWeight:600}}>Start first pipeline</button>
+    </Card>}
+    <div style={{display:'flex',flexDirection:'column',gap:8}}>
+      {runs.map(run=>(
+        <div key={run.run_id} onClick={()=>onSelect(run.run_id,run.project_name)}
+          className="animate-in"
+          style={{background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:'var(--r2)',
+            padding:'14px 18px',cursor:'pointer',display:'flex',alignItems:'center',gap:14,
+            transition:'border-color .15s'}}
+          onMouseEnter={e=>e.currentTarget.style.borderColor='var(--border3)'}
+          onMouseLeave={e=>e.currentTarget.style.borderColor='var(--border)'}>
+          <div style={{fontSize:22}}>{phaseOf(run.current_phase).icon}</div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontWeight:600,fontSize:14}}>{run.project_name}</div>
+            <div style={{fontSize:11,color:'var(--text3)',marginTop:2,fontFamily:'var(--mono)'}}>
+              {run.run_id.slice(0,8)} · {fmtDate(run.created_at)}
+            </div>
+          </div>
+          <div style={{textAlign:'right'}}>
+            <Tag label={run.status} color={sc[run.status]||'var(--text3)'}/>
+            <div style={{fontSize:11,color:'var(--text3)',marginTop:4}}>{run.current_phase?.replace(/_/g,' ')}</div>
+          </div>
+          <span style={{color:'var(--text3)',fontSize:18}}>›</span>
+        </div>
+      ))}
+    </div>
+  </div>;
+}
+
+/* ─── Nav ────────────────────────────────────────────────────────────────── */
+function Nav({view,onNav}){
+  return <div style={{background:'var(--bg2)',borderBottom:'1px solid var(--border)',
+    padding:'0 1.5rem',height:52,display:'flex',alignItems:'center',gap:16,flexShrink:0}}>
+    <span style={{fontWeight:700,fontSize:15,letterSpacing:'-.02em',
+      background:'linear-gradient(135deg,#60a5fa,#a78bfa)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent'}}>
+      ⚡ SDLC
+    </span>
+    <div style={{flex:1}}/>
+    {[['new','+ New Run'],['runs','All Runs']].map(([v,l])=>(
+      <button key={v} onClick={()=>onNav(v)} style={{
+        padding:'6px 14px',borderRadius:'var(--r)',fontSize:12,fontWeight:500,
+        background:view===v?'var(--blue)':'transparent',
+        color:view===v?'#fff':'var(--text3)',
+        border:`1px solid ${view===v?'var(--blue)':'transparent'}`,
+      }}>{l}</button>
+    ))}
+    <a href={`${API}/docs`} target="_blank" rel="noreferrer"
+      style={{fontSize:12,color:'var(--text3)'}}>API docs ↗</a>
+  </div>;
+}
+
+/* ─── Root app ────────────────────────────────────────────────────────────── */
+function App(){
+  const [view,setView]=useState('new');
+  const [active,setActive]=useState(null);
+
+  const handleStart=(runId,name)=>{ setActive({runId,name}); setView('dashboard'); };
+  const handleSelect=(runId,name)=>{ setActive({runId,name}); setView('dashboard'); };
+
+  if(view==='dashboard'&&active) return (
+    <Dashboard runId={active.runId} projectName={active.name}
+      onBack={()=>setView('runs')} onNewRun={()=>setView('new')}/>
+  );
+
+  return <div style={{minHeight:'100vh',display:'flex',flexDirection:'column'}}>
+    <Nav view={view} onNav={setView}/>
+    <div style={{flex:1}}>
+      {view==='new'&&<UploadPage onStart={handleStart}/>}
+      {view==='runs'&&<RunList onSelect={handleSelect} onNew={()=>setView('new')}/>}
+    </div>
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

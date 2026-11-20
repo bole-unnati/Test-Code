@@ -1,0 +1,176 @@
+version: '3.9'
+
+# ================================================================
+# SDLC Automation Platform — 100% Open-Source Stack
+# Start everything: docker compose up -d
+# ================================================================
+
+services:
+
+  # ── Backend API (FastAPI + LangGraph + Groq) ─────────────────
+  api:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    env_file: ./backend/.env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - GITEA_URL=http://192.168.74.12:3000/
+      - PLANE_URL=http://plane-web:3000
+      - OUTLINE_URL=http://outline:3001
+      - MATTERMOST_URL=http://mattermost:8065
+      - MINIO_URL=http://minio:9000
+      - ZAMMAD_URL=http://zammad:3000
+      - CORS_ORIGINS=http://localhost:5173,http://localhost:80
+    depends_on:
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── Frontend (static HTML served by nginx) ───────────────────
+  frontend:
+    image: nginx:alpine
+    ports:
+      - "5173:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # ── Redis (state store + WebSocket pub/sub) ──────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+
+  # ── Gitea (code hosting — replaces GitHub) ───────────────────
+  gitea:
+    image: gitea/gitea:latest
+    ports:
+      - "3000:3000"
+      - "2222:22"
+    volumes:
+      - gitea_data:/data
+    environment:
+      - GITEA__database__DB_TYPE=sqlite3
+      - GITEA__server__DOMAIN=localhost
+      - GITEA__server__ROOT_URL=http://localhost:3000
+    restart: unless-stopped
+
+  # ── Plane (project mgmt — replaces Linear/Asana/Monday) ──────
+  # Plane requires its own compose — reference their official setup:
+  # https://docs.plane.so/self-hosting/docker-compose
+  # plane-web:
+  #   image: makeplane/plane-frontend:latest
+  #   ... (see plane docker-compose.yml)
+
+  # ── Outline (wiki — replaces Notion/Confluence) ───────────────
+  outline:
+    image: outlinewiki/outline:latest
+    ports:
+      - "3001:3000"
+    environment:
+      - DATABASE_URL=postgres://outline:outline@outline-db/outline
+      - REDIS_URL=redis://redis:6379/1
+      - SECRET_KEY=change_me_to_random_32_chars_min
+      - UTILS_SECRET=change_me_to_random_32_chars_min
+      - URL=http://localhost:3001
+      - PORT=3000
+    depends_on:
+      - outline-db
+      - redis
+    restart: unless-stopped
+
+  outline-db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=outline
+      - POSTGRES_PASSWORD=outline
+      - POSTGRES_DB=outline
+    volumes:
+      - outline_db:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  # ── Mattermost (notifications — replaces Teams/Slack) ─────────
+  mattermost:
+    image: mattermost/mattermost-team-edition:latest
+    ports:
+      - "8065:8065"
+    volumes:
+      - mattermost_data:/mattermost/data
+    environment:
+      - MM_SQLSETTINGS_DRIVERNAME=postgres
+      - MM_SQLSETTINGS_DATASOURCE=postgres://mattermost:mattermost@mattermost-db/mattermost?sslmode=disable
+    depends_on:
+      - mattermost-db
+    restart: unless-stopped
+
+  mattermost-db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=mattermost
+      - POSTGRES_PASSWORD=mattermost
+      - POSTGRES_DB=mattermost
+    volumes:
+      - mattermost_db:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  # ── MinIO (object storage — replaces Box/SharePoint) ─────────
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"    # MinIO Console UI
+    volumes:
+      - minio_data:/data
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+
+  # ── Zammad (support tickets — replaces Intercom/HubSpot) ──────
+  zammad:
+    image: zammad/zammad-docker-compose:latest
+    ports:
+      - "8081:3000"
+    depends_on:
+      - zammad-db
+      - redis
+    restart: unless-stopped
+
+  zammad-db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=zammad
+      - POSTGRES_PASSWORD=zammad
+      - POSTGRES_DB=zammad
+    volumes:
+      - zammad_db:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  # ── Penpot (design — replaces Figma) ──────────────────────────
+  penpot:
+    image: penpotapp/frontend:latest
+    ports:
+      - "9001:80"
+    restart: unless-stopped
+
+volumes:
+  gitea_data:
+  outline_db:
+  mattermost_db:
+  mattermost_data:
+  minio_data:
+  zammad_db:

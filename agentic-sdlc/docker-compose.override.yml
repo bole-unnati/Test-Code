@@ -1,0 +1,17 @@
+# docker-compose.override.yml
+# Extends docker-compose.yml with Docker socket access for real CI/CD execution.
+# Run: docker compose up -d   (this file is automatically used)
+
+services:
+  api:
+    volumes:
+      # Mount Docker socket so the backend can build/run containers
+      # Linux / Mac:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Windows (uncomment if on Windows):
+      # - //./pipe/docker_engine://./pipe/docker_engine
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    # Give the API container access to the docker group
+    group_add:
+      - "${DOCKER_GID:-999}"
